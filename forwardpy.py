@@ -13,6 +13,7 @@ print("\n🔧 Telegram Channel Copier with Resume Support")
 
 # Save credentials in a config.json so it's used once
 CONFIG_FILE = "config.json"
+SESSION_FILE = "anon"  # Named session file
 
 if not os.path.exists(CONFIG_FILE):
     api_id = int(input("🔑 Enter your Telegram API ID: ").strip())
@@ -41,7 +42,7 @@ phone = config["phone"]
 source_channel_name = config["source_channel_name"]
 target_channel_name = config["target_channel_name"]
 
-client = TelegramClient('session', api_id, api_hash)
+client = TelegramClient(SESSION_FILE, api_id, api_hash)
 
 # ===============================
 # ✅ MAIN LOGIC
@@ -102,8 +103,8 @@ async def main():
             try:
                 if msg.media:
                     await client.send_file(tgt, msg.media, caption=msg.message or '')
-                elif msg.text:
-                    await client.send_message(tgt, msg.text)
+                elif msg.message:
+                    await client.send_message(tgt, msg.message)
                 else:
                     continue  # skip unknown types
 
