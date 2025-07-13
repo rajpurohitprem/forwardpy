@@ -2,19 +2,23 @@ from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 from tqdm import tqdm
 import asyncio
+import traceback
+import os
 
 print("🔧 Telegram Channel Copier Setup")
 
 api_id = int(input("🔑 Enter your Telegram API ID: ").strip())
 api_hash = input("🔐 Enter your Telegram API Hash: ").strip()
 phone = input("📱 Enter your phone number (with country code, e.g. +91xxxxxx): ").strip()
-source_channel_name = input("📤 Source Channel Name: ").strip()
-target_channel_name = input("📥 Target Channel Name: ").strip()
+source_channel_name = input("📤 Source Channel Name (visible title): ").strip()
+target_channel_name = input("📥 Target Channel Name (visible title): ").strip()
 
-client = TelegramClient('session', api_id, api_hash)
+# Session file name = session_{phone}.session so multiple accounts can work
+session_name = f"session_{phone.replace('+', '').replace(' ', '')}"
+client = TelegramClient(session_name, api_id, api_hash)
 
 async def main():
-    print("\n🔐 Logging into Telegram...")
+    print("\n🔐 Logging into Telegram (session will be saved)...")
     await client.start(phone=phone)
 
     print("🔍 Locating your channels...")
@@ -29,13 +33,13 @@ async def main():
             tgt = dialog.entity
 
     if not src or not tgt:
-        print("❌ Could not find one or both channels. Make sure you're a member.")
+        print("❌ Could not find one or both channels. Make sure you're a member of both.")
         return
 
-    print("✅ Channels found! Starting copy (first 5 messages only)...")
+    print("✅ Channels found! Starting copy (test mode: 5 messages)...")
 
     offset_id = 0
-    limit = 5  # LIMIT for test mode
+    limit = 5  # <-- Test mode limit, remove or increase later
     messages = []
 
     while True:
@@ -53,18 +57,20 @@ async def main():
             break
         messages.extend(history.messages)
         offset_id = history.messages[-1].id
-        break  # Only one page for test
+        break  # Remove this 'break' if you want to fetch more messages later
 
     print(f"📦 Messages fetched: {len(messages)}")
 
     for msg in reversed(messages):
+        print(f"➡️ Copying msg {msg.id} | media: {bool(msg.media)} | text: {msg.text[:30] if msg.text else 'No text'}")
         try:
             if msg.media:
                 await client.send_file(tgt, msg.media, caption=msg.text or '')
             elif msg.text:
                 await client.send_message(tgt, msg.text)
-        except Exception as e:
-            print(f"⚠️ Error copying message {msg.id}: {e}")
+        except Exception:
+            print(f"⚠️ Error copying message {msg.id}")
+            traceback.print_exc()
 
     print("✅ Done copying!")
 
