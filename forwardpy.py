@@ -1,4 +1,4 @@
-"from telethon.sync import TelegramClient
+from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest, UpdatePinnedMessageRequest
 from tqdm import tqdm
 import asyncio
