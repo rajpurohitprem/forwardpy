@@ -2,70 +2,91 @@ from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 from tqdm import tqdm
 import asyncio
-import traceback
 import os
 import json
 
-# 🔧 Load or prompt config
-config_path = "config.json"
-if os.path.exists(config_path):
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-else:
+# ===============================
+# ✅ SETTINGS + SESSION SETUP
+# ===============================
+
+print("\n🔧 Telegram Channel Copier with Resume Support")
+
+# Save credentials in a config.json so it's used once
+CONFIG_FILE = "config.json"
+
+if not os.path.exists(CONFIG_FILE):
+    api_id = int(input("🔑 Enter your Telegram API ID: ").strip())
+    api_hash = input("🔐 Enter your Telegram API Hash: ").strip()
+    phone = input("📱 Enter your phone number (with country code, e.g. +91xxxxxx): ").strip()
+    source_channel_name = input("📤 Source Channel Name: ").strip()
+    target_channel_name = input("📥 Target Channel Name: ").strip()
+
     config = {
-        "api_id": int(input("🔑 Enter API ID: ").strip()),
-        "api_hash": input("🔐 Enter API Hash: ").strip(),
-        "phone": input("📱 Phone (e.g. +91...): ").strip(),
-        "source_channel_name": input("📤 Source Channel Title: ").strip(),
-        "target_channel_name": input("📥 Target Channel Title: ").strip()
+        "api_id": api_id,
+        "api_hash": api_hash,
+        "phone": phone,
+        "source_channel_name": source_channel_name,
+        "target_channel_name": target_channel_name
     }
-    with open(config_path, 'w') as f:
+
+    with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
-    print("💾 Config saved.")
-
-session_name = f"session_{config['phone'].replace('+','')}"
-client = TelegramClient(session_name, config['api_id'], config['api_hash'])
-
-# ✅ Load copied message IDs
-copied_ids_file = 'copied_ids.txt'
-if os.path.exists(copied_ids_file):
-    with open(copied_ids_file, 'r') as f:
-        copied_ids = set(int(line.strip()) for line in f if line.strip().isdigit())
 else:
-    copied_ids = set()
+    with open(CONFIG_FILE, "r") as f:
+        config = json.load(f)
+
+api_id = config["api_id"]
+api_hash = config["api_hash"]
+phone = config["phone"]
+source_channel_name = config["source_channel_name"]
+target_channel_name = config["target_channel_name"]
+
+client = TelegramClient('session', api_id, api_hash)
+
+# ===============================
+# ✅ MAIN LOGIC
+# ===============================
+
+# Track sent messages
+SENT_LOG = "sent_ids.txt"
+sent_ids = set()
+if os.path.exists(SENT_LOG):
+    with open(SENT_LOG, "r") as f:
+        sent_ids = set(map(int, f.read().splitlines()))
+
 
 async def main():
-    print("🔐 Logging in...")
-    await client.start(phone=config['phone'])
+    print("\n🔐 Logging into Telegram...")
+    await client.start(phone=phone)
 
-    print("🔍 Finding channels...")
+    print("🔍 Locating your channels...")
     dialogs = await client.get_dialogs()
+
     src = tgt = None
     for dialog in dialogs:
         title = dialog.name.strip().lower()
-        if title == config['source_channel_name'].strip().lower():
+        if title == source_channel_name.strip().lower():
             src = dialog.entity
-        if title == config['target_channel_name'].strip().lower():
+        if title == target_channel_name.strip().lower():
             tgt = dialog.entity
 
     if not src or not tgt:
-        print("❌ Channel not found. Check names and membership.")
+        print("❌ Could not find one or both channels. Make sure you're a member.")
         return
 
-    print("✅ Channels found! Fetching messages (oldest first)...")
+    print("✅ Channels found! Starting copy...")
 
     offset_id = 0
-    total_copied = 0
-    fetch_limit = 5  # You can increase this later
-    stop_after = 5   # To stop after 5 total messages for testing
+    limit = 100
+    pbar = tqdm(desc="Copying messages", unit="msg")
 
-    while total_copied < stop_after:
+    while True:
         history = await client(GetHistoryRequest(
             peer=src,
             offset_id=offset_id,
             offset_date=None,
             add_offset=0,
-            limit=100,
+            limit=limit,
             max_id=0,
             min_id=0,
             hash=0
@@ -74,34 +95,36 @@ async def main():
         if not history.messages:
             break
 
-        messages = history.messages
-        messages = list(reversed(messages))  # oldest to newest
+        for msg in reversed(history.messages):
+            if msg.id in sent_ids:
+                continue  # skip already copied
 
-        for msg in messages:
-            if msg.id in copied_ids:
-                continue  # Skip already copied
             try:
-                print(f"➡️ Copying message {msg.id}")
                 if msg.media:
                     await client.send_file(tgt, msg.media, caption=msg.message or '')
-                elif msg.message:
-                    await client.send_message(tgt, msg.message)
-                copied_ids.add(msg.id)
-                total_copied += 1
+                elif msg.text:
+                    await client.send_message(tgt, msg.text)
+                else:
+                    continue  # skip unknown types
 
-                # Save after each message
-                with open(copied_ids_file, 'a') as f:
+                # Log sent message ID
+                with open(SENT_LOG, "a") as f:
                     f.write(str(msg.id) + "\n")
+                sent_ids.add(msg.id)
+                pbar.update(1)
 
-                if total_copied >= stop_after:
-                    break
             except Exception as e:
-                print(f"⚠️ Error copying message {msg.id}")
-                traceback.print_exc()
+                print(f"⚠️ Error copying message {msg.id}: {e}")
+                continue
 
-        offset_id = messages[-1].id
+        offset_id = history.messages[-1].id
 
-    print(f"✅ Copied {total_copied} new messages.")
+    print("\n✅ Done copying!")
+
+
+# ===============================
+# ✅ RUN SCRIPT
+# ===============================
 
 with client:
     client.loop.run_until_complete(main())
