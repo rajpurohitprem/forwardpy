@@ -8,6 +8,7 @@ import json
 CONFIG_FILE = "config.json"
 SESSION_FILE = "anon"
 SENT_LOG = "sent_ids.txt"
+ERROR_LOG = "errors.txt"
 
 # Load or ask config
 if not os.path.exists(CONFIG_FILE):
@@ -31,6 +32,12 @@ else:
         config = json.load(f)
     print(f"Loaded config — Source: {config['source_channel_name']} | Target: {config['target_channel_name']}")
 
+    if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
+        config['source_channel_name'] = input("📤 New Source Channel Name: ").strip()
+        config['target_channel_name'] = input("📥 New Target Channel Name: ").strip()
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=4)
+
 api_id = config["api_id"]
 api_hash = config["api_hash"]
 phone = config["phone"]
@@ -44,8 +51,6 @@ sent_ids = set()
 if os.path.exists(SENT_LOG):
     with open(SENT_LOG, "r") as f:
         sent_ids = set(map(int, f.read().splitlines()))
-
-pin_map = {}
 
 async def main():
     await client.start(phone=phone)
@@ -63,14 +68,13 @@ async def main():
         print("❌ Channels not found!")
         return
 
-    offset_id = 0
+    last_msg_id = max(sent_ids) if sent_ids else 0
     limit = 100
-    pbar = tqdm(desc="Copying messages", unit="msg")
 
-    while True:
+    try:
         history = await client(GetHistoryRequest(
             peer=src,
-            offset_id=offset_id,
+            offset_id=last_msg_id,
             offset_date=None,
             add_offset=0,
             limit=limit,
@@ -80,14 +84,19 @@ async def main():
         ))
 
         if not history.messages:
-            break
+            print("✅ No new messages to sync.")
+            return
+
+        print(f"📥 Found {len(history.messages)} new messages")
+
+        text_count = media_count = skipped_count = 0
 
         for msg in reversed(history.messages):
+
             if msg.id in sent_ids:
                 continue
 
             try:
-                # Build full message text
                 caption_text = msg.text or ''
                 if msg.forward:
                     fwd_from = ""
@@ -97,30 +106,31 @@ async def main():
                         fwd_from = msg.forward.chat.title or "Unknown Channel"
                     caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
-                # Try to download media
                 file_path = None
+
                 if msg.media:
                     try:
                         file_path = await msg.download_media()
                     except Exception:
-                        print(f"⚠️ Media in message {msg.id} is protected and could not be downloaded.")
+                        print(f"⚠️ Media in message {msg.id} could not be downloaded.")
                         file_path = None
 
-                # Send to target
+                # Send media or text
                 if file_path and os.path.exists(file_path):
                     sent = await client.send_file(tgt, file_path, caption=caption_text)
-                    os.remove(file_path)
+                    os.remove(file_path)  # ✅ Delete temp file after send
+                    media_count += 1
                 elif caption_text:
                     sent = await client.send_message(tgt, caption_text)
+                    text_count += 1
                 else:
-                    continue  # Skip if nothing to send
+                    skipped_count += 1
+                    continue
 
                 with open(SENT_LOG, "a") as f:
                     f.write(str(msg.id) + "\n")
                 sent_ids.add(msg.id)
-                pbar.update(1)
 
-                pin_map[msg.id] = sent.id
                 if msg.pinned:
                     await client(UpdatePinnedMessageRequest(
                         peer=tgt,
@@ -129,12 +139,15 @@ async def main():
                     ))
 
             except Exception as e:
+                with open(ERROR_LOG, "a") as ef:
+                    ef.write(f"Message {msg.id}: {e}\n")
                 print(f"⚠️ Error copying message {msg.id}: {e}")
                 continue
 
-        offset_id = history.messages[-1].id
+        print(f"✅ Batch complete: {media_count} media, {text_count} text, {skipped_count} skipped")
 
-    print("\n✅ Done copying all messages.")
+    except Exception as e:
+        print(f"⚠️ Loop error: {e}")
 
 with client:
     client.loop.run_until_complete(main())
