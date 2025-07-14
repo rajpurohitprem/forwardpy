@@ -71,75 +71,78 @@ async def main():
     offset_id = 0
     limit = 100
     total_fetched = 0
+    all_done = False
 
-    while True:
-        history = await client(GetHistoryRequest(
-            peer=src,
-            offset_id=offset_id,
-            offset_date=None,
-            add_offset=0,
-            limit=limit,
-            max_id=0,
-            min_id=0,
-            hash=0
-        ))
+    with tqdm(desc="Copying messages", unit="msg") as pbar:
+        while not all_done:
+            history = await client(GetHistoryRequest(
+                peer=src,
+                offset_id=offset_id,
+                offset_date=None,
+                add_offset=0,
+                limit=limit,
+                max_id=0,
+                min_id=0,
+                hash=0
+            ))
 
-        messages = history.messages
-        if not messages:
-            break
+            messages = history.messages
+            if not messages:
+                break
 
-        for msg in reversed(messages):
-            if msg.id in sent_ids:
-                continue
+            for msg in messages:
+                offset_id = msg.id
 
-            try:
-                caption_text = msg.text or ''
-                if msg.forward:
-                    fwd_from = ""
-                    if msg.forward.sender:
-                        fwd_from = msg.forward.sender.username or "Unknown User"
-                    elif msg.forward.chat:
-                        fwd_from = msg.forward.chat.title or "Unknown Channel"
-                    caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
-
-                file_path = None
-                if msg.media:
-                    try:
-                        file_path = await msg.download_media()
-                    except Exception:
-                        print(f"⚠️ Media in message {msg.id} could not be downloaded.")
-                        file_path = None
-
-                if file_path and os.path.exists(file_path):
-                    sent = await client.send_file(tgt, file_path, caption=caption_text)
-                    os.remove(file_path)
-                elif caption_text:
-                    sent = await client.send_message(tgt, caption_text)
-                else:
+                if msg.id in sent_ids:
                     continue
 
-                with open(SENT_LOG, "a") as f:
-                    f.write(str(msg.id) + "\n")
-                sent_ids.add(msg.id)
+                try:
+                    caption_text = msg.text or ''
+                    if msg.forward:
+                        fwd_from = ""
+                        if msg.forward.sender:
+                            fwd_from = msg.forward.sender.username or "Unknown User"
+                        elif msg.forward.chat:
+                            fwd_from = msg.forward.chat.title or "Unknown Channel"
+                        caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
-                if msg.pinned:
-                    await client(UpdatePinnedMessageRequest(
-                        peer=tgt,
-                        id=sent.id,
-                        silent=True
-                    ))
+                    file_path = None
+                    if msg.media:
+                        try:
+                            file_path = await msg.download_media()
+                        except Exception:
+                            print(f"⚠️ Media in message {msg.id} could not be downloaded.")
+                            file_path = None
 
-                total_fetched += 1
+                    if file_path and os.path.exists(file_path):
+                        sent = await client.send_file(tgt, file_path, caption=caption_text)
+                        os.remove(file_path)
+                    elif caption_text:
+                        sent = await client.send_message(tgt, caption_text)
+                    else:
+                        continue
 
-            except Exception as e:
-                with open(ERROR_LOG, "a") as ef:
-                    ef.write(f"Message {msg.id}: {e}\n")
-                print(f"⚠️ Error copying message {msg.id}: {e}")
-                continue
+                    with open(SENT_LOG, "a") as f:
+                        f.write(str(msg.id) + "\n")
+                    sent_ids.add(msg.id)
 
-        offset_id = messages[-1].id
+                    if msg.pinned:
+                        await client(UpdatePinnedMessageRequest(
+                            peer=tgt,
+                            id=sent.id,
+                            silent=True
+                        ))
 
-    print(f"\n✅ Done copying {total_fetched} new messages.")
+                    total_fetched += 1
+                    pbar.update(1)
+
+                except Exception as e:
+                    with open(ERROR_LOG, "a") as ef:
+                        ef.write(f"Message {msg.id}: {e}\n")
+                    print(f"⚠️ Error copying message {msg.id}: {e}")
+                    continue
+
+    print(f"\n✅ Done copying {total_fetched} messages.")
 
 with client:
     client.loop.run_until_complete(main())
