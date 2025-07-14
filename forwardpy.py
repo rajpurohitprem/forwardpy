@@ -22,8 +22,8 @@ if not os.path.exists(CONFIG_FILE):
         "api_hash": api_hash,
         "phone": phone,
         if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
-        "source_channel_name": source_channel_name,
-        "target_channel_name": target_channel_name
+            "source_channel_name": source_channel_name,
+            "target_channel_name": target_channel_name
     }
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
