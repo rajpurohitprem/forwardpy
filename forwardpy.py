@@ -68,13 +68,14 @@ async def main():
         print("❌ Channels not found!")
         return
 
-    last_msg_id = max(sent_ids) if sent_ids else 0
+    offset_id = 0
     limit = 100
+    total_fetched = 0
 
-    try:
+    while True:
         history = await client(GetHistoryRequest(
             peer=src,
-            offset_id=last_msg_id,
+            offset_id=offset_id,
             offset_date=None,
             add_offset=0,
             limit=limit,
@@ -83,16 +84,11 @@ async def main():
             hash=0
         ))
 
-        if not history.messages:
-            print("✅ No new messages to sync.")
-            return
+        messages = history.messages
+        if not messages:
+            break
 
-        print(f"📥 Found {len(history.messages)} new messages")
-
-        text_count = media_count = skipped_count = 0
-
-        for msg in reversed(history.messages):
-
+        for msg in reversed(messages):
             if msg.id in sent_ids:
                 continue
 
@@ -107,7 +103,6 @@ async def main():
                     caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
                 file_path = None
-
                 if msg.media:
                     try:
                         file_path = await msg.download_media()
@@ -115,16 +110,12 @@ async def main():
                         print(f"⚠️ Media in message {msg.id} could not be downloaded.")
                         file_path = None
 
-                # Send media or text
                 if file_path and os.path.exists(file_path):
                     sent = await client.send_file(tgt, file_path, caption=caption_text)
-                    os.remove(file_path)  # ✅ Delete temp file after send
-                    media_count += 1
+                    os.remove(file_path)
                 elif caption_text:
                     sent = await client.send_message(tgt, caption_text)
-                    text_count += 1
                 else:
-                    skipped_count += 1
                     continue
 
                 with open(SENT_LOG, "a") as f:
@@ -138,16 +129,17 @@ async def main():
                         silent=True
                     ))
 
+                total_fetched += 1
+
             except Exception as e:
                 with open(ERROR_LOG, "a") as ef:
                     ef.write(f"Message {msg.id}: {e}\n")
                 print(f"⚠️ Error copying message {msg.id}: {e}")
                 continue
 
-        print(f"✅ Batch complete: {media_count} media, {text_count} text, {skipped_count} skipped")
+        offset_id = messages[-1].id
 
-    except Exception as e:
-        print(f"⚠️ Loop error: {e}")
+    print(f"\n✅ Done copying {total_fetched} new messages.")
 
 with client:
     client.loop.run_until_complete(main())
