@@ -21,7 +21,7 @@ if not os.path.exists(CONFIG_FILE):
         "api_id": api_id,
         "api_hash": api_hash,
         "phone": phone,
-        if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
+    if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
             "source_channel_name": source_channel_name,
             "target_channel_name": target_channel_name
     }
