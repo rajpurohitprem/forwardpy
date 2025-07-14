@@ -116,7 +116,7 @@ async def main():
 
                     if file_path and os.path.exists(file_path):
                         sent = await client.send_file(tgt, file_path, caption=caption_text)
-                        os.remove(file_path)
+                        os.remove(file_path)  # ✅ Delete file after sending
                     elif caption_text:
                         sent = await client.send_message(tgt, caption_text)
                     else:
