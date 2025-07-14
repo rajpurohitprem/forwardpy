@@ -9,7 +9,7 @@ CONFIG_FILE = "config.json"
 SESSION_FILE = "anon"
 SENT_LOG = "sent_ids.txt"
 
-# 🧠 Load or ask config
+# Load or ask config
 if not os.path.exists(CONFIG_FILE):
     api_id = int(input("API ID: "))
     api_hash = input("API Hash: ")
@@ -39,7 +39,7 @@ target_channel_name = config["target_channel_name"]
 
 client = TelegramClient(SESSION_FILE, api_id, api_hash)
 
-# ✅ Load previously sent IDs
+# Load sent log
 sent_ids = set()
 if os.path.exists(SENT_LOG):
     with open(SENT_LOG, "r") as f:
@@ -87,26 +87,33 @@ async def main():
                 continue
 
             try:
-                # 📎 Download if media exists
+                # Build full message text
+                caption_text = msg.text or ''
+                if msg.forward:
+                    fwd_from = ""
+                    if msg.forward.sender:
+                        fwd_from = msg.forward.sender.username or "Unknown User"
+                    elif msg.forward.chat:
+                        fwd_from = msg.forward.chat.title or "Unknown Channel"
+                    caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
+
+                # Try to download media
                 file_path = None
                 if msg.media:
                     try:
                         file_path = await msg.download_media()
-                    except:
-                        print(f"⚠️ Could not download media from message {msg.id}")
-                        continue
+                    except Exception:
+                        print(f"⚠️ Media in message {msg.id} is protected and could not be downloaded.")
+                        file_path = None
 
-                # ✏️ Build message text
-                text = msg.text or ''
-
-                # 📤 Upload to target
+                # Send to target
                 if file_path and os.path.exists(file_path):
-                    sent = await client.send_file(tgt, file_path, caption=text)
+                    sent = await client.send_file(tgt, file_path, caption=caption_text)
                     os.remove(file_path)
-                elif text:
-                    sent = await client.send_message(tgt, text)
+                elif caption_text:
+                    sent = await client.send_message(tgt, caption_text)
                 else:
-                    continue
+                    continue  # Skip if nothing to send
 
                 with open(SENT_LOG, "a") as f:
                     f.write(str(msg.id) + "\n")
@@ -127,7 +134,7 @@ async def main():
 
         offset_id = history.messages[-1].id
 
-    print("\n✅ Done copying all accessible content.")
+    print("\n✅ Done copying all messages.")
 
 with client:
     client.loop.run_until_complete(main())
