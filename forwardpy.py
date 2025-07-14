@@ -110,8 +110,12 @@ async def main():
         print(f"📥 Found {len(history.messages)} new messages")
 
         text_count = media_count = skipped_count = 0
+        total = len(history.messages)
 
-        for msg in reversed(history.messages):
+        for i, msg in enumerate(reversed(history.messages), start=1):
+            percent = round((i / total) * 100)
+            await update_status(f"🔄 Progress: {i}/{total} ({percent}%)\n📨 Message ID: {msg.id}")
+
             if msg.id in sent_ids:
                 continue
 
@@ -126,7 +130,7 @@ async def main():
                     caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
                 file_path = None
-                await update_status(f"⬇️ Downloading message {msg.id}...")
+                await update_status(f"🔽️ Downloading message {msg.id}...")
 
                 if msg.media:
                     try:
