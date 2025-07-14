@@ -21,11 +21,9 @@ if not os.path.exists(CONFIG_FILE):
         "api_id": api_id,
         "api_hash": api_hash,
         "phone": phone,
+        "source_channel_name": source_channel_name,
+        "target_channel_name": target_channel_name
     }
-    if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
-        config['source_channel_name'] = input("📤 New Source Channel Name: ").strip()
-        config['target_channel_name'] = input("📥 New Target Channel Name: ").strip()
-
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
 else:
@@ -33,12 +31,6 @@ else:
         config = json.load(f)
     print(f"Loaded config — Source: {config['source_channel_name']} | Target: {config['target_channel_name']}")
 
-    if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
-        config['source_channel_name'] = input("📤 New Source Channel Name: ").strip()
-        config['target_channel_name'] = input("📥 New Target Channel Name: ").strip()
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=4)
-            
 api_id = config["api_id"]
 api_hash = config["api_hash"]
 phone = config["phone"]
