@@ -52,7 +52,6 @@ if os.path.exists(SENT_LOG):
     with open(SENT_LOG, "r") as f:
         sent_ids = set(map(int, f.read().splitlines()))
 
-pin_map = {}
 status_msg = None
 
 async def update_status(text):
@@ -102,7 +101,7 @@ async def main():
 
             if not history.messages:
                 await update_status("✅ Waiting for new messages...")
-                await asyncio.sleep(1)
+                await asyncio.sleep(10)
                 continue
 
             print(f"🔄 Checked at {time.strftime('%H:%M:%S')} — Found {len(history.messages)} messages")
