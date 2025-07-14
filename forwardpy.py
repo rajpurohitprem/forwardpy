@@ -102,7 +102,7 @@ async def main():
 
             if not history.messages:
                 await update_status("✅ Waiting for new messages...")
-                await asyncio.sleep(10)
+                await asyncio.sleep(1)
                 continue
 
             print(f"🔄 Checked at {time.strftime('%H:%M:%S')} — Found {len(history.messages)} messages")
