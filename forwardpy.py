@@ -4,16 +4,17 @@ from tqdm import tqdm
 import asyncio
 import os
 import json
+import time
 
 CONFIG_FILE = "config.json"
 SESSION_FILE = "anon"
 SENT_LOG = "sent_ids.txt"
 
-# Load or create config
+# Load or ask config
 if not os.path.exists(CONFIG_FILE):
     api_id = int(input("API ID: "))
     api_hash = input("API Hash: ")
-    phone = input("Phone: ")
+    phone = input("Phone number (+91xxxx): ")
     source_channel_name = input("Source Channel Name: ")
     target_channel_name = input("Target Channel Name: ")
 
@@ -29,7 +30,13 @@ if not os.path.exists(CONFIG_FILE):
 else:
     with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
-    print(f"✅ Loaded config: {config['source_channel_name']} → {config['target_channel_name']}")
+    print(f"Loaded config — Source: {config['source_channel_name']} | Target: {config['target_channel_name']}")
+
+    if input("✏️ Do you want to edit source/target channels? (y/n): ").lower() == 'y':
+        config['source_channel_name'] = input("📤 New Source Channel Name: ").strip()
+        config['target_channel_name'] = input("📥 New Target Channel Name: ").strip()
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=4)
 
 api_id = config["api_id"]
 api_hash = config["api_hash"]
@@ -39,12 +46,25 @@ target_channel_name = config["target_channel_name"]
 
 client = TelegramClient(SESSION_FILE, api_id, api_hash)
 
+# Load sent log
 sent_ids = set()
 if os.path.exists(SENT_LOG):
     with open(SENT_LOG, "r") as f:
         sent_ids = set(map(int, f.read().splitlines()))
 
 pin_map = {}
+status_msg = None
+
+async def update_status(text):
+    global status_msg
+    if status_msg:
+        try:
+            await client.edit_message(status_msg.chat_id, status_msg.id, text)
+        except:
+            pass
+    else:
+        status_msg = await client.send_message(target_channel_name, text)
+
 
 async def main():
     await client.start(phone=phone)
@@ -52,81 +72,96 @@ async def main():
     dialogs = await client.get_dialogs()
     src = tgt = None
     for dialog in dialogs:
-        if dialog.name.strip().lower() == source_channel_name.lower():
+        title = dialog.name.strip().lower()
+        if title == source_channel_name.lower():
             src = dialog.entity
-        if dialog.name.strip().lower() == target_channel_name.lower():
+        if title == target_channel_name.lower():
             tgt = dialog.entity
 
     if not src or not tgt:
-        print("❌ One of the channels not found.")
+        print("❌ Channels not found!")
         return
 
-    offset_id = 0
+    print("✅ Starting live sync loop...")
+    await update_status("🔄 Syncing messages from source to target...")
+
+    last_offset_id = 0
     limit = 100
-    pbar = tqdm(desc="Copying", unit="msg")
 
     while True:
-        history = await client(GetHistoryRequest(
-            peer=src,
-            offset_id=offset_id,
-            offset_date=None,
-            add_offset=0,
-            limit=limit,
-            max_id=0,
-            min_id=0,
-            hash=0
-        ))
+        try:
+            history = await client(GetHistoryRequest(
+                peer=src,
+                offset_id=last_offset_id,
+                offset_date=None,
+                add_offset=0,
+                limit=limit,
+                max_id=0,
+                min_id=0,
+                hash=0
+            ))
 
-        if not history.messages:
-            break
-
-        for msg in reversed(history.messages):
-            if msg.id in sent_ids:
+            if not history.messages:
+                await update_status("✅ Waiting for new messages...")
+                await asyncio.sleep(10)
                 continue
 
-            text = msg.message or ''
-            if msg.forward:
-                try:
-                    fwd_from = msg.forward.chat.title if msg.forward.chat else "Unknown"
-                except:
-                    fwd_from = "Unknown"
-                text = f"[Forwarded from {fwd_from}]\n{text}"
-
-            try:
-                if msg.media:
-                    try:
-                        path = await client.download_media(msg)
-                        if path and os.path.exists(path):
-                            sent = await client.send_file(tgt, path, caption=text)
-                            os.remove(path)
-                        else:
-                            print(f"⚠️ Could not download media for msg {msg.id}")
-                            continue
-                    except Exception as e:
-                        print(f"❌ Media protected or failed at msg {msg.id}: {e}")
-                        continue
-                elif text:
-                    sent = await client.send_message(tgt, text)
-                else:
+            for msg in reversed(history.messages):
+                if msg.id in sent_ids:
                     continue
 
-                # Success log
-                with open(SENT_LOG, "a") as f:
-                    f.write(str(msg.id) + "\n")
-                sent_ids.add(msg.id)
-                pbar.update(1)
+                try:
+                    caption_text = msg.text or ''
+                    if msg.forward:
+                        fwd_from = ""
+                        if msg.forward.sender:
+                            fwd_from = msg.forward.sender.username or "Unknown User"
+                        elif msg.forward.chat:
+                            fwd_from = msg.forward.chat.title or "Unknown Channel"
+                        caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
-                pin_map[msg.id] = sent.id
-                if msg.pinned:
-                    await client(UpdatePinnedMessageRequest(peer=tgt, id=sent.id, silent=True))
+                    file_path = None
+                    await update_status(f"⬇️ Downloading message {msg.id}...")
+                    if msg.media:
+                        try:
+                            file_path = await msg.download_media()
+                        except Exception:
+                            await update_status(f"⚠️ Media in message {msg.id} could not be downloaded.")
+                            file_path = None
 
-            except Exception as e:
-                print(f"⚠️ Error on msg {msg.id}: {e}")
-                continue
+                    await update_status(f"📤 Sending message {msg.id}...")
+                    if file_path and os.path.exists(file_path):
+                        sent = await client.send_file(tgt, file_path, caption=caption_text)
+                        os.remove(file_path)
+                    elif caption_text:
+                        sent = await client.send_message(tgt, caption_text)
+                    else:
+                        continue
 
-        offset_id = history.messages[-1].id
+                    with open(SENT_LOG, "a") as f:
+                        f.write(str(msg.id) + "\n")
+                    sent_ids.add(msg.id)
 
-    print("\n✅ All messages processed.")
+                    pin_map[msg.id] = sent.id
+                    if msg.pinned:
+                        await client(UpdatePinnedMessageRequest(
+                            peer=tgt,
+                            id=sent.id,
+                            silent=True
+                        ))
+
+                    await update_status(f"✅ Message {msg.id} copied!")
+
+                except Exception as e:
+                    await update_status(f"⚠️ Error copying message {msg.id}: {e}")
+                    continue
+
+            last_offset_id = history.messages[-1].id
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            await update_status(f"⚠️ Loop error: {e}")
+            await asyncio.sleep(10)
 
 with client:
     client.loop.run_until_complete(main())
