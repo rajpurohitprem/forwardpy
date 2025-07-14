@@ -65,7 +65,6 @@ async def update_status(text):
     else:
         status_msg = await client.send_message(target_channel_name, text)
 
-
 async def main():
     await client.start(phone=phone)
 
@@ -85,19 +84,19 @@ async def main():
     print("✅ Starting live sync loop...")
     await update_status("🔄 Syncing messages from source to target...")
 
-    last_offset_id = 0
+    last_msg_id = max(sent_ids) if sent_ids else 0
     limit = 100
 
     while True:
         try:
             history = await client(GetHistoryRequest(
                 peer=src,
-                offset_id=last_offset_id,
+                offset_id=0,
                 offset_date=None,
                 add_offset=0,
                 limit=limit,
                 max_id=0,
-                min_id=0,
+                min_id=last_msg_id,
                 hash=0
             ))
 
@@ -105,6 +104,8 @@ async def main():
                 await update_status("✅ Waiting for new messages...")
                 await asyncio.sleep(10)
                 continue
+
+            print(f"🔄 Checked at {time.strftime('%H:%M:%S')} — Found {len(history.messages)} messages")
 
             for msg in reversed(history.messages):
                 if msg.id in sent_ids:
@@ -142,7 +143,6 @@ async def main():
                         f.write(str(msg.id) + "\n")
                     sent_ids.add(msg.id)
 
-                    pin_map[msg.id] = sent.id
                     if msg.pinned:
                         await client(UpdatePinnedMessageRequest(
                             peer=tgt,
@@ -151,12 +151,12 @@ async def main():
                         ))
 
                     await update_status(f"✅ Message {msg.id} copied!")
+                    last_msg_id = max(last_msg_id, msg.id)
 
                 except Exception as e:
                     await update_status(f"⚠️ Error copying message {msg.id}: {e}")
                     continue
 
-            last_offset_id = history.messages[-1].id
             await asyncio.sleep(5)
 
         except Exception as e:
