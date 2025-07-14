@@ -9,11 +9,11 @@ CONFIG_FILE = "config.json"
 SESSION_FILE = "anon"
 SENT_LOG = "sent_ids.txt"
 
-# Load or ask config
+# Load or create config
 if not os.path.exists(CONFIG_FILE):
     api_id = int(input("API ID: "))
     api_hash = input("API Hash: ")
-    phone = input("Phone number (+91xxxx): ")
+    phone = input("Phone: ")
     source_channel_name = input("Source Channel Name: ")
     target_channel_name = input("Target Channel Name: ")
 
@@ -29,7 +29,7 @@ if not os.path.exists(CONFIG_FILE):
 else:
     with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
-    print(f"Loaded config — Source: {config['source_channel_name']} | Target: {config['target_channel_name']}")
+    print(f"✅ Loaded config: {config['source_channel_name']} → {config['target_channel_name']}")
 
 api_id = config["api_id"]
 api_hash = config["api_hash"]
@@ -39,7 +39,6 @@ target_channel_name = config["target_channel_name"]
 
 client = TelegramClient(SESSION_FILE, api_id, api_hash)
 
-# Load sent log
 sent_ids = set()
 if os.path.exists(SENT_LOG):
     with open(SENT_LOG, "r") as f:
@@ -53,19 +52,18 @@ async def main():
     dialogs = await client.get_dialogs()
     src = tgt = None
     for dialog in dialogs:
-        title = dialog.name.strip().lower()
-        if title == source_channel_name.lower():
+        if dialog.name.strip().lower() == source_channel_name.lower():
             src = dialog.entity
-        if title == target_channel_name.lower():
+        if dialog.name.strip().lower() == target_channel_name.lower():
             tgt = dialog.entity
 
     if not src or not tgt:
-        print("❌ Channels not found!")
+        print("❌ One of the channels not found.")
         return
 
     offset_id = 0
     limit = 100
-    pbar = tqdm(desc="Copying messages", unit="msg")
+    pbar = tqdm(desc="Copying", unit="msg")
 
     while True:
         history = await client(GetHistoryRequest(
@@ -86,35 +84,33 @@ async def main():
             if msg.id in sent_ids:
                 continue
 
-            try:
-                # Build full message text
-                caption_text = msg.text or ''
-                if msg.forward:
-                    fwd_from = ""
-                    if msg.forward.sender:
-                        fwd_from = msg.forward.sender.username or "Unknown User"
-                    elif msg.forward.chat:
-                        fwd_from = msg.forward.chat.title or "Unknown Channel"
-                    caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
+            text = msg.message or ''
+            if msg.forward:
+                try:
+                    fwd_from = msg.forward.chat.title if msg.forward.chat else "Unknown"
+                except:
+                    fwd_from = "Unknown"
+                text = f"[Forwarded from {fwd_from}]\n{text}"
 
-                # Try to download media
-                file_path = None
+            try:
                 if msg.media:
                     try:
-                        file_path = await msg.download_media()
-                    except Exception:
-                        print(f"⚠️ Media in message {msg.id} is protected and could not be downloaded.")
-                        file_path = None
-
-                # Send to target
-                if file_path and os.path.exists(file_path):
-                    sent = await client.send_file(tgt, file_path, caption=caption_text)
-                    os.remove(file_path)
-                elif caption_text:
-                    sent = await client.send_message(tgt, caption_text)
+                        path = await client.download_media(msg)
+                        if path and os.path.exists(path):
+                            sent = await client.send_file(tgt, path, caption=text)
+                            os.remove(path)
+                        else:
+                            print(f"⚠️ Could not download media for msg {msg.id}")
+                            continue
+                    except Exception as e:
+                        print(f"❌ Media protected or failed at msg {msg.id}: {e}")
+                        continue
+                elif text:
+                    sent = await client.send_message(tgt, text)
                 else:
-                    continue  # Skip if nothing to send
+                    continue
 
+                # Success log
                 with open(SENT_LOG, "a") as f:
                     f.write(str(msg.id) + "\n")
                 sent_ids.add(msg.id)
@@ -122,19 +118,15 @@ async def main():
 
                 pin_map[msg.id] = sent.id
                 if msg.pinned:
-                    await client(UpdatePinnedMessageRequest(
-                        peer=tgt,
-                        id=sent.id,
-                        silent=True
-                    ))
+                    await client(UpdatePinnedMessageRequest(peer=tgt, id=sent.id, silent=True))
 
             except Exception as e:
-                print(f"⚠️ Error copying message {msg.id}: {e}")
+                print(f"⚠️ Error on msg {msg.id}: {e}")
                 continue
 
         offset_id = history.messages[-1].id
 
-    print("\n✅ Done copying all messages.")
+    print("\n✅ All messages processed.")
 
 with client:
     client.loop.run_until_complete(main())
