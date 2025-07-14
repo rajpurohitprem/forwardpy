@@ -86,100 +86,95 @@ async def main():
         print("❌ Channels not found!")
         return
 
-    print("✅ Starting live sync loop...")
     await update_status("🔄 Syncing messages from source to target...")
 
     last_msg_id = max(sent_ids) if sent_ids else 0
     limit = 100
 
-    while True:
-        try:
-            history = await client(GetHistoryRequest(
-                peer=src,
-                offset_id=0,
-                offset_date=None,
-                add_offset=0,
-                limit=limit,
-                max_id=0,
-                min_id=last_msg_id,
-                hash=0
-            ))
+    try:
+        history = await client(GetHistoryRequest(
+            peer=src,
+            offset_id=0,
+            offset_date=None,
+            add_offset=0,
+            limit=limit,
+            max_id=0,
+            min_id=last_msg_id,
+            hash=0
+        ))
 
-            if not history.messages:
-                await update_status("✅ Waiting for new messages...")
-                await asyncio.sleep(10)
+        if not history.messages:
+            print("✅ No new messages to sync.")
+            return
+
+        print(f"📥 Found {len(history.messages)} new messages")
+
+        text_count = media_count = skipped_count = 0
+
+        for msg in reversed(history.messages):
+            if msg.id in sent_ids:
                 continue
 
-            print(f"🔄 Checked at {time.strftime('%H:%M:%S')} — Found {len(history.messages)} messages")
+            try:
+                caption_text = msg.text or ''
+                if msg.forward:
+                    fwd_from = ""
+                    if msg.forward.sender:
+                        fwd_from = msg.forward.sender.username or "Unknown User"
+                    elif msg.forward.chat:
+                        fwd_from = msg.forward.chat.title or "Unknown Channel"
+                    caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
 
-            text_count = media_count = skipped_count = 0
+                file_path = None
+                await update_status(f"⬇️ Downloading message {msg.id}...")
 
-            for msg in reversed(history.messages):
-                if msg.id in sent_ids:
+                if msg.media:
+                    try:
+                        file_path = await msg.download_media()
+                    except Exception:
+                        await update_status(f"⚠️ Media in message {msg.id} could not be downloaded.")
+                        file_path = None
+
+                await update_status(f"📤 Sending message {msg.id}...")
+
+                if dry_run:
+                    print(f"[DRY RUN] Would send message {msg.id}")
+                elif file_path and os.path.exists(file_path):
+                    sent = await client.send_file(tgt, file_path, caption=caption_text)
+                    os.remove(file_path)
+                    media_count += 1
+                elif caption_text:
+                    sent = await client.send_message(tgt, caption_text)
+                    text_count += 1
+                else:
+                    skipped_count += 1
                     continue
 
-                try:
-                    caption_text = msg.text or ''
-                    if msg.forward:
-                        fwd_from = ""
-                        if msg.forward.sender:
-                            fwd_from = msg.forward.sender.username or "Unknown User"
-                        elif msg.forward.chat:
-                            fwd_from = msg.forward.chat.title or "Unknown Channel"
-                        caption_text = f"[Forwarded from {fwd_from}]\n{caption_text}"
+                if not dry_run:
+                    with open(SENT_LOG, "a") as f:
+                        f.write(str(msg.id) + "\n")
+                    sent_ids.add(msg.id)
 
-                    file_path = None
-                    await update_status(f"⬇️ Downloading message {msg.id}...")
+                    if msg.pinned:
+                        await client(UpdatePinnedMessageRequest(
+                            peer=tgt,
+                            id=sent.id,
+                            silent=True
+                        ))
 
-                    if msg.media:
-                        try:
-                            file_path = await msg.download_media()
-                        except Exception:
-                            await update_status(f"⚠️ Media in message {msg.id} could not be downloaded.")
-                            file_path = None
+                await update_status(f"✅ Message {msg.id} copied!")
+                last_msg_id = max(last_msg_id, msg.id)
 
-                    await update_status(f"📤 Sending message {msg.id}...")
+            except Exception as e:
+                with open(ERROR_LOG, "a") as ef:
+                    ef.write(f"Message {msg.id}: {e}\n")
+                await update_status(f"⚠️ Error copying message {msg.id}: {e}")
+                continue
 
-                    if dry_run:
-                        print(f"[DRY RUN] Would send message {msg.id}")
-                    elif file_path and os.path.exists(file_path):
-                        sent = await client.send_file(tgt, file_path, caption=caption_text)
-                        os.remove(file_path)
-                        media_count += 1
-                    elif caption_text:
-                        sent = await client.send_message(tgt, caption_text)
-                        text_count += 1
-                    else:
-                        skipped_count += 1
-                        continue
+        await update_status(f"✅ Batch done: {media_count} media, {text_count} text, {skipped_count} skipped")
 
-                    if not dry_run:
-                        with open(SENT_LOG, "a") as f:
-                            f.write(str(msg.id) + "\n")
-                        sent_ids.add(msg.id)
-
-                        if msg.pinned:
-                            await client(UpdatePinnedMessageRequest(
-                                peer=tgt,
-                                id=sent.id,
-                                silent=True
-                            ))
-
-                    await update_status(f"✅ Message {msg.id} copied!")
-                    last_msg_id = max(last_msg_id, msg.id)
-
-                except Exception as e:
-                    with open(ERROR_LOG, "a") as ef:
-                        ef.write(f"Message {msg.id}: {e}\n")
-                    await update_status(f"⚠️ Error copying message {msg.id}: {e}")
-                    continue
-
-            await update_status(f"✅ Batch done: {media_count} media, {text_count} text, {skipped_count} skipped")
-            await asyncio.sleep(5)
-
-        except Exception as e:
-            await update_status(f"⚠️ Loop error: {e}")
-            await asyncio.sleep(10)
+    except Exception as e:
+        await update_status(f"⚠️ Loop error: {e}")
 
 with client:
     client.loop.run_until_complete(main())
